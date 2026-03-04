@@ -1,0 +1,8 @@
+# pywin32 provides win32com for COM automation of Outlook desktop app
+pywin32
+# pdfplumber pulls in pdfminer.six automatically
+pdfplumber
+# openpyxl for .xlsx parsing; .xls (old format) is NOT supported by openpyxl
+openpyxl
+beautifulsoup4
+html2text
