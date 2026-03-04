@@ -59,41 +59,32 @@ def get_outlook_app():
 
 def get_folder_tree() -> list:
     """
-    Return a flat list of folder_node dicts representing ALL Outlook folders
-    (all top-level accounts and their subfolders).
+    Return a list of top-level folder_node dicts (one per Outlook account/mailbox).
+    Each node's "children" list embeds all descendant nodes recursively.
+
+    Callers render the tree by iterating the returned list and recursing into "children".
 
     Each folder_node has:
       {
         "name": str,          # folder display name
         "full_path": str,     # backslash-joined path from mailbox root
-        "depth": int,         # nesting depth for UI indentation
+        "depth": int,         # nesting depth (0 for top-level accounts)
         "children": list      # list of child folder_node dicts
       }
-
-    The returned list is flat (all nodes at all depths), ordered depth-first.
-    Children are also embedded in each node for tree rendering.
     """
     app = get_outlook_app()
     namespace = app.GetNamespace("MAPI")
 
-    all_nodes = []
+    top_nodes = []
     for i in range(1, namespace.Folders.Count + 1):
         try:
             top_folder = namespace.Folders.Item(i)
             node = _recurse_folder(top_folder, depth=0, parent_path="")
-            all_nodes.append(node)
-            _flatten_into(node, all_nodes)
+            top_nodes.append(node)
         except Exception as e:
             logger.warning("Error reading top-level folder at index %d: %s", i, e)
 
-    return all_nodes
-
-
-def _flatten_into(node: dict, result: list) -> None:
-    """Recursively add all children of node into result list (depth-first)."""
-    for child in node.get("children", []):
-        result.append(child)
-        _flatten_into(child, result)
+    return top_nodes
 
 
 def _recurse_folder(folder, depth: int, parent_path: str) -> dict:

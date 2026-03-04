@@ -162,9 +162,10 @@ class WizardApp(tk.Tk):
         self.destroy()
 
     def disable_nav(self) -> None:
-        """Disable navigation buttons (used during export)."""
+        """Disable navigation buttons and prevent window close during export."""
         self._btn_back.config(state="disabled")
         self._btn_cancel.config(state="disabled")
+        self.protocol("WM_DELETE_WINDOW", lambda: None)  # block close during export
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +178,7 @@ class Step1Welcome(ttk.Frame):
     def __init__(self, parent, wizard: WizardApp, **kwargs) -> None:
         super().__init__(parent, **kwargs)
         self.wizard = wizard
+        self._refresh_btn = None  # tracked so we never create a second one
 
         ttk.Label(
             self,
@@ -210,6 +212,9 @@ class Step1Welcome(ttk.Frame):
                 text="Outlook is running",
                 foreground="green",
             )
+            if self._refresh_btn is not None:
+                self._refresh_btn.destroy()
+                self._refresh_btn = None
             self.wizard._btn_next.config(state="normal")
         else:
             self._status_label.config(
@@ -218,7 +223,9 @@ class Step1Welcome(ttk.Frame):
                 wraplength=460,
             )
             self.wizard._btn_next.config(state="disabled")
-            ttk.Button(self, text="Refresh", command=self._check_outlook).pack(pady=4)
+            if self._refresh_btn is None:  # only create one Refresh button
+                self._refresh_btn = ttk.Button(self, text="Refresh", command=self._check_outlook)
+                self._refresh_btn.pack(pady=4)
 
     def validate(self) -> bool:
         from outlook_connector import is_outlook_running
@@ -261,19 +268,43 @@ class Step2FolderConfig(ttk.Frame):
         threading.Thread(target=self._load_folders, daemon=True).start()
 
     def _load_folders(self) -> None:
+        # COM must be initialized on any background thread that uses it
+        _com_init = False
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+            _com_init = True
+        except ImportError:
+            pass
         try:
             from outlook_connector import get_folder_tree
             nodes = get_folder_tree()
-            self.wizard.after(0, lambda: self._build_ui(nodes))
+
+            def safe_build():
+                # Guard: frame may have been destroyed if user navigated away
+                if self.winfo_exists():
+                    self._build_ui(nodes)
+
+            self.wizard.after(0, safe_build)
         except Exception as e:
-            self.wizard.after(
-                0,
-                lambda: messagebox.showerror(
-                    "Outlook Error",
-                    f"Could not load Outlook folder list:\n{e}",
-                    parent=self.wizard,
-                )
-            )
+            captured = e
+
+            def safe_error():
+                if self.wizard.winfo_exists():
+                    messagebox.showerror(
+                        "Outlook Error",
+                        f"Could not load Outlook folder list:\n{captured}",
+                        parent=self.wizard,
+                    )
+
+            self.wizard.after(0, safe_error)
+        finally:
+            if _com_init:
+                try:
+                    import pythoncom
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
 
     def _build_ui(self, nodes: list) -> None:
         self._loading_label.destroy()
@@ -301,11 +332,13 @@ class Step2FolderConfig(ttk.Frame):
         inner.bind("<Configure>", on_frame_configure)
         canvas.bind("<Configure>", on_canvas_configure)
 
-        # Mouse wheel scrolling
+        # Mouse wheel scrolling — bind_all so child widgets (labels, comboboxes) also scroll
         def on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         canvas.bind_all("<MouseWheel>", on_mousewheel)
+        # Unbind when this step frame is destroyed to prevent leaking into later steps
+        self.bind("<Destroy>", lambda _e: canvas.unbind_all("<MouseWheel>"))
 
         # Header row
         hdr = ttk.Frame(inner)
@@ -314,10 +347,9 @@ class Step2FolderConfig(ttk.Frame):
         ttk.Label(hdr, text="Export Mode", font=("", 9, "bold")).pack(side="right", padx=(0, 20))
         ttk.Separator(inner, orient="horizontal").pack(fill="x")
 
-        # Render top-level nodes (children are embedded recursively)
+        # get_folder_tree() returns top-level nodes; children are embedded recursively
         for node in nodes:
-            if node["depth"] == 0:
-                self._render_node(inner, node)
+            self._render_node(inner, node)
 
         # Pre-populate from saved config
         saved_folders = self.wizard.config_data.get("folders", {})

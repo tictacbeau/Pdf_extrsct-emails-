@@ -101,8 +101,8 @@ def create_output_folder(
     Returns the final created folder path.
     """
     safe_rel = sanitize_path_segment(folder_rel_path) if folder_rel_path else ""
-    date_folder = format_amount_folder_name(received_time, amount)
-    safe_date_folder = sanitize_folder_name(date_folder)
+    # format_amount_folder_name produces only safe chars (digits, hyphens, underscores, $, comma, dot)
+    safe_date_folder = format_amount_folder_name(received_time, amount)
 
     if safe_rel:
         base_path = os.path.join(output_base_dir, safe_rel, safe_date_folder)

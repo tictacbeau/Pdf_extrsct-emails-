@@ -39,12 +39,13 @@ def run_export(config: dict, progress_callback=None) -> list:
     Returns:
         List of ExportResult dicts.
     """
+    _com_initialized = False  # must be set before try so finally block is safe
     try:
         import pythoncom
         pythoncom.CoInitialize()
         _com_initialized = True
     except ImportError:
-        _com_initialized = False
+        pass
 
     results = []
     output_dir = config.get("output_dir", "")
@@ -303,6 +304,24 @@ def extract_best_amount(file_paths: list, body_text: str):
     return None
 
 
+def _unique_dest_path(dest_path: str) -> str:
+    """
+    Return dest_path if it doesn't exist; otherwise return the first free
+    path with a _2, _3, … suffix inserted before the extension.
+    """
+    if not os.path.exists(dest_path):
+        return dest_path
+    from pathlib import Path
+    p = Path(dest_path)
+    stem, suffix = p.stem, p.suffix
+    counter = 2
+    while True:
+        candidate = p.with_name(f"{stem}_{counter}{suffix}")
+        if not candidate.exists():
+            return str(candidate)
+        counter += 1
+
+
 def save_attachments_to_dir(item, staging_dir: str) -> list:
     """
     Iterate item.Attachments (1-based COM collection).
@@ -323,21 +342,7 @@ def save_attachments_to_dir(item, staging_dir: str) -> list:
             filename = getattr(attachment, "FileName", "") or f"attachment_{i}"
             safe_name = sanitize_filename(filename) or f"attachment_{i}"
 
-            # Resolve duplicate filenames in same staging dir
-            dest_path = os.path.join(staging_dir, safe_name)
-            if os.path.exists(dest_path):
-                stem, _, ext = safe_name.rpartition(".")
-                if ext:
-                    counter = 2
-                    while os.path.exists(dest_path):
-                        dest_path = os.path.join(staging_dir, f"{stem}_{counter}.{ext}")
-                        counter += 1
-                else:
-                    counter = 2
-                    while os.path.exists(dest_path):
-                        dest_path = os.path.join(staging_dir, f"{safe_name}_{counter}")
-                        counter += 1
-
+            dest_path = _unique_dest_path(os.path.join(staging_dir, safe_name))
             attachment.SaveAsFile(dest_path)
             saved.append(dest_path)
             logger.debug("Saved attachment: %s", dest_path)
